@@ -1,56 +1,84 @@
-"""Главный файл проекта УП.02 (вариант 22, «Доставка еды»).
+"""Главное окно приложения «Доставка еды»: каталог, роли, заказы.
 
 Запуск:  python main.py
-Выберите пункт меню — программа запустит нужную часть проекта.
+Логины для входа: client1, client2 (Клиент), manager1 (Менеджер), admin1 (Администратор).
 """
-import subprocess
-import sys
+import tkinter as tk
+from tkinter import messagebox
 
-MENU = [
-    ("Пара 2. task_01 — скидка по введённой цене", "task_01_discount.py"),
-    ("Пара 2. task_02 — класс Product (обувь)", "task_02_class.py"),
-    ("Пара 2. task_03 — каталог и итоговая сумма", "task_03_catalog.py"),
-    ("Пара 2. task_04 — индикатор «много / мало»", "task_04_indicator.py"),
-    ("Пара 3. Проверка подключения к БД", "db_test.py"),
-    ("Пара 3. Структура базы данных", "show_structure.py"),
-    ("Пара 3. Пять SQL-запросов", ["run_sql.py", "queries_pair3.sql"]),
-    ("Пара 3. ДЗ — 10 SQL-запросов (queries.sql)", ["run_sql.py", "queries.sql"]),
-    ("Пара 4. Проверка класса Product", "test_product.py"),
-    ("Пара 4. Каталог товаров из БД (объекты Product)", "db_products.py"),
-    ("Пара 4. Заказы из БД (объекты Order)", "db_orders.py"),
-    ("Пара 5. Тесты алгоритма скидки (дополнительные)", "test_discount_extra.py"),
-    ("Пара 6. Расширенные тесты алгоритма скидки", "test_discount.py"),
-    ("Пара 6. ДЗ — граничные тесты", "test_discount_boundaries.py"),
-]
+import database as db
+from db_migrate import ensure_schema
+from error_handler import safe_call
+from main_catalog import CatalogWindow
+from order_manager import create_order
+from styles import COLOR_ACCENT, FONT_SIZE_NORMAL, font
 
 
-def run(script):
-    args = script if isinstance(script, list) else [script]
-    print("\n" + "=" * 70)
-    print("Запуск:", " ".join(args))
-    print("=" * 70)
-    subprocess.run([sys.executable, *args])
+class MainWindow(CatalogWindow):
+    """Каталог + авторизация + кнопки по ролям."""
+
+    def __init__(self):
+        super().__init__()
+        self.current_user = None
+        self.on_add_to_order = self.make_order
+        self.load_products()          # перерисовать карточки с оформлением заказа
+        self.root.after(100, self.require_auth)
+
+    def require_auth(self):
+        """Запрашивает авторизацию."""
+        from auth import AuthWindow
+        AuthWindow(self.root, self.on_auth_success)
+
+    def on_auth_success(self, user):
+        """
+        Обработчик успешной авторизации.
+
+        :param user: кортеж (id, фамилия, имя, отчество, логин, роль)
+        """
+        self.current_user = user
+        self.user_label.config(text=f"{self.get_user_fio()} ({user[db.U_ROLE]})")
+        self.add_role_buttons(user[db.U_ROLE])
+
+    def get_user_fio(self):
+        """ФИО текущего пользователя."""
+        user = self.current_user
+        return f"{user[db.U_LAST]} {user[db.U_FIRST]} {user[db.U_MIDDLE] or ''}".strip()
+
+    def add_role_buttons(self, role):
+        """Добавляет кнопки в зависимости от роли."""
+        if role in ("Менеджер", "Администратор"):
+            tk.Button(self.header, text="Заказы", command=self.open_orders,
+                      bg=COLOR_ACCENT, fg="white", font=font(FONT_SIZE_NORMAL),
+                      padx=10, pady=5).pack(side="right", padx=10)
+        if role == "Администратор":
+            tk.Button(self.header, text="Админ-панель", command=self.open_admin,
+                      bg=COLOR_ACCENT, fg="white", font=font(FONT_SIZE_NORMAL),
+                      padx=10, pady=5).pack(side="right", padx=10)
+
+    def make_order(self, product, quantity):
+        """Оформляет заказ текущего пользователя (вызывается из формы просмотра)."""
+        if self.current_user is None:
+            raise ValueError("Сначала войдите в систему")
+        create_order(self.get_user_fio(), [(product[db.P_ID], quantity)])
+
+    def open_orders(self):
+        """Открывает список заказов."""
+        from orders_window import OrdersWindow
+        safe_call(OrdersWindow, self.root, self.current_user)
+
+    def open_admin(self):
+        """Открывает админ-панель."""
+        from admin_panel import AdminPanel
+        safe_call(AdminPanel, self.root, self.current_user, self.refresh_catalog)
 
 
 def main():
-    while True:
-        print("\n" + "=" * 70)
-        print("ПРОЕКТ УП.02 — Болатчиев Ислам, вариант 22 (Доставка еды)")
-        print("=" * 70)
-        for i, (title, _) in enumerate(MENU, start=1):
-            print(f"{i:>2}. {title}")
-        print(" a. Запустить всё подряд (кроме пункта 1)")
-        print(" 0. Выход")
-        choice = input("Ваш выбор: ").strip().lower()
-        if choice in ("0", "q", "exit", ""):
-            break
-        if choice == "a":
-            for title, script in MENU[1:]:
-                run(script)
-        elif choice.isdigit() and 1 <= int(choice) <= len(MENU):
-            run(MENU[int(choice) - 1][1])
-        else:
-            print("Нет такого пункта.")
+    try:
+        ensure_schema()
+    except Exception as error:
+        messagebox.showerror("База данных", f"Не удалось подготовить БД:\n{error}")
+        return
+    MainWindow().run()
 
 
 if __name__ == "__main__":
